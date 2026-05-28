@@ -8,3 +8,4 @@ output/*.xlsx
 .streamlit/secrets.toml
 *.egg-info/
 .vscode/
+test_output.xlsx
