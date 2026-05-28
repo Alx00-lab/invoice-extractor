@@ -4,6 +4,8 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
+from .validator import parse_amount, detect_currency_symbol
+
 logger = logging.getLogger(__name__)
 
 # Colors
@@ -136,7 +138,7 @@ def generate_batch_excel(invoices: list) -> bytes:
         summary.row_dimensions[row].height = 22
         row += 1
 
-    # Totals row (sum of successful invoices)
+    # Totals row — real computed sums across successful invoices.
     ok_invoices = [i for i in invoices if i.get("status") == "ok"]
     if ok_invoices:
         row += 1
@@ -147,14 +149,36 @@ def generate_batch_excel(invoices: list) -> bytes:
         totals_label.alignment = Alignment(horizontal="center", vertical="center")
         summary.merge_cells(start_row=row, start_column=1, end_row=row, end_column=5)
 
-        # We display totals as strings (preserving original formatting)
+        # Sum each column in pure Python; detect a currency symbol for display.
+        sums = {"subtotal": 0.0, "tax": 0.0, "total": 0.0}
+        present = {"subtotal": False, "tax": False, "total": False}
+        symbol_pool = []
+        for inv in ok_invoices:
+            d = inv.get("data", {})
+            for key in sums:
+                amt = parse_amount(d.get(key))
+                if amt is not None:
+                    sums[key] += amt
+                    present[key] = True
+                if d.get(key):
+                    symbol_pool.append(d.get(key))
+        symbol = detect_currency_symbol(symbol_pool)
+
         for col_idx, key in [(6, "subtotal"), (7, "tax"), (8, "total")]:
             cell = summary.cell(row=row, column=col_idx)
-            cell.value = "see individual rows"
-            cell.font = Font(italic=True, size=9, color="666666")
+            if present[key]:
+                cell.value = f"{symbol}{sums[key]:,.2f}" if symbol else f"{sums[key]:,.2f}"
+            else:
+                cell.value = "—"
+            cell.font = Font(bold=True, size=10, color=HEADER_COLOR)
             cell.fill = PatternFill("solid", fgColor=LIGHT_BLUE)
-            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.alignment = Alignment(horizontal="right", vertical="center")
             cell.border = _thin_border()
+
+        # Status column on the totals row — keep the styling consistent.
+        tail = summary.cell(row=row, column=9)
+        tail.fill = PatternFill("solid", fgColor=LIGHT_BLUE)
+        tail.border = _thin_border()
         summary.row_dimensions[row].height = 22
 
     # Freeze top header
