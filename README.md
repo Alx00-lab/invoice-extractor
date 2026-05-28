@@ -1,21 +1,25 @@
 # 🧾 Invoice Data Extractor
 
-Automatically extract structured data from PDF invoices using AI — no manual entry, no errors.
+**Process multiple PDF invoices at once. Get a clean consolidated Excel in seconds.**
 
-**Upload a PDF → Get clean Excel in seconds.**
+Built for small businesses that waste hours every month manually copying invoice data into spreadsheets.
 
 ---
 
 ## What it does
 
-- Reads any text-based PDF invoice
-- Extracts: vendor, invoice number, dates, payment terms, line items, subtotal, tax, total
-- Detects total mismatches automatically (e.g., line items don't add up to stated total)
-- Delivers a formatted, ready-to-use Excel file
+- ✅ Upload **multiple PDF invoices** at once
+- ✅ AI extracts: vendor, invoice #, dates, payment terms, line items, subtotal, tax, total
+- ✅ **One consolidated Excel** with two sheets: Summary + all Line Items
+- ✅ Detects total mismatches automatically (line items don't add up)
+- ✅ Continues processing even if one file fails
+- ✅ **Try it instantly** with the included sample invoice
 
 ## Live Demo
 
-👉 [Try it here](https://your-app.streamlit.app) *(replace with your Streamlit Cloud URL)*
+👉 [Try it here](https://your-app.streamlit.app)
+
+*No invoice handy? Click "Try with sample invoice" to see it in action.*
 
 ## Tech Stack
 
@@ -26,6 +30,13 @@ Automatically extract structured data from PDF invoices using AI — no manual e
 | GPT-4o-mini | AI data structuring |
 | Streamlit | Web interface |
 | openpyxl | Excel generation |
+
+## Cost Per Invoice
+
+~$0.0005 USD per invoice using GPT-4o-mini.
+$5 of OpenAI credit processes ~10,000 invoices.
+
+Clients never interact with the API — the developer absorbs this cost as part of the service.
 
 ## Run Locally
 
@@ -40,21 +51,18 @@ echo "OPENAI_API_KEY=sk-your-key" > .env
 streamlit run app.py
 ```
 
-## Deploy on Streamlit Cloud (free)
+## Deploy on Streamlit Cloud (Free)
 
 1. Push this repo to GitHub
 2. Go to [share.streamlit.io](https://share.streamlit.io)
 3. Connect your repo
-4. Add `OPENAI_API_KEY` in the secrets section
-5. Done — live URL in 2 minutes
-
-## Cost per invoice
-
-Processing 100 invoices with GPT-4o-mini costs approximately **$0.10–0.20 total.**
-Clients never interact with the API — this is fully managed on your end.
+4. In **Settings → Secrets**, add:
+   ```toml
+   OPENAI_API_KEY = "sk-your-key"
+   ```
+5. Deploy — live URL in 2 minutes
 
 ## Built by
 
-Alex — Finance Automation Specialist  
-Specializing in automating manual invoice and reporting workflows for small businesses.  
-📧 your@email.com | [LinkedIn](https://linkedin.com/in/yourprofile) | [Upwork](https://upwork.com/yourprofile)
+**Alex** — Finance Automation Specialist
+Specializing in automating manual invoice and reporting workflows for small businesses.

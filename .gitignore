@@ -3,6 +3,8 @@
 __pycache__/
 *.pyc
 *.pyo
-test_output.xlsx
-*.xlsx
+.DS_Store
+output/*.xlsx
 .streamlit/secrets.toml
+*.egg-info/
+.vscode/
