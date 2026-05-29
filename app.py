@@ -126,11 +126,11 @@ st.markdown("""
     <h1>🧾 Invoice Data Extractor</h1>
     <p>Drop in your PDF invoices and get back clean, structured data plus a
     consolidated Excel — summary and every line item — in seconds. No manual entry, no typos.</p>
-    <span class="pill">Powered by GPT-4o-mini · ~$0.0005 / invoice</span>
+    <span class="pill">AI-powered · From PDF to structured Excel in seconds</span>
 </div>
 """, unsafe_allow_html=True)
 
-# ── API key (secrets → env → input) ───────────────────────────
+# ── API key (secrets → env) ───────────────────────────────────
 api_key = ""
 secrets_path = Path(__file__).parent / ".streamlit" / "secrets.toml"
 if secrets_path.exists():
@@ -142,20 +142,7 @@ if not api_key:
     api_key = os.getenv("OPENAI_API_KEY", "")
 
 with st.sidebar:
-    st.header("⚙️ Settings")
-    if api_key:
-        st.success("✓ API key loaded")
-    else:
-        api_key = st.text_input(
-            "OpenAI API Key",
-            type="password",
-            placeholder="sk-...",
-            help="Never stored. Kept in memory for this session only.",
-        )
-        st.caption("Get a key at [platform.openai.com](https://platform.openai.com)")
-
-    st.divider()
-    st.markdown("**How it works**")
+    st.markdown("### How it works")
     st.markdown(
         "1. Upload one or more PDF invoices\n"
         "2. AI extracts every key field\n"
@@ -163,10 +150,7 @@ with st.sidebar:
         "4. Download one clean Excel file"
     )
     st.divider()
-    st.markdown("**Cost per invoice**")
-    st.caption("~$0.0005 USD using GPT-4o-mini")
-    st.divider()
-    st.caption("Built by Alex · Finance Automation Specialist")
+    st.markdown("Built by **Alex** · [Upwork](YOUR_UPWORK_URL)")
 
 # ── Session state ─────────────────────────────────────────────
 SAMPLE_PATH = Path(__file__).parent / "samples" / "sample_invoice.pdf"
@@ -202,9 +186,9 @@ if st.session_state.use_sample:
 elif uploaded_files:
     files_to_process = [(f.name, f, "file") for f in uploaded_files]
 
-# ── Guard: no key ─────────────────────────────────────────────
+# ── Guard: no key configured ──────────────────────────────────
 if files_to_process and not api_key:
-    st.warning("⚠️ Enter your OpenAI API key in the sidebar to continue.")
+    st.error("⚠️ This demo is temporarily unavailable. Please check back shortly.")
     st.stop()
 
 # ── Process ───────────────────────────────────────────────────
