@@ -17,14 +17,15 @@ from extractor import (
     safe_filename,
     file_id,
     md_safe,
-    install_log_redaction,
 )
 
 logging.basicConfig(level=logging.INFO)
-# Belt-and-suspenders: every log line from us OR any third-party library
-# (pdfplumber, openai, httpx, streamlit) passes through redact() before
-# it reaches stdout / the Streamlit Cloud log sink.
-install_log_redaction()
+# Note: a root-handler logging filter to scrub third-party leaks lives in
+# extractor/security.py (install_log_redaction). It is intentionally NOT
+# wired here — it touched Streamlit's own root handlers and could interfere
+# with Tornado's websocket plumbing. Our own modules already redact at every
+# raise/log site, so direct leakage is covered. Revisit only if we move
+# behind a reverse proxy that handles logs separately.
 
 # ── Demo guardrails ───────────────────────────────────────────
 # Every OpenAI call costs real money. These caps bound the worst-case
