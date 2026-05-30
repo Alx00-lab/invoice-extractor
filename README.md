@@ -43,7 +43,7 @@ If the extracted total doesn't match the sum of line items, the tool flags it au
 
 ## Demo
 
-![Invoice Extractor Demo][(https://invoice-extractor-cmdkq7ehi57dhjqgqbzlj6.streamlit.app/)](https://github.com/Alx00-lab/invoice-extractor.git)
+![Invoice Extractor Demo][https://invoice-extractor-cmdkq7ehi57dhjqgqbzlj6.streamlit.app/]
 
 *(Upload → Extract → Download — in under 30 seconds)*
 
