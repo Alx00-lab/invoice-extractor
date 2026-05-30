@@ -6,21 +6,28 @@ from datetime import date as _date, datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.page import PageMargins
 
 from .validator import parse_amount, detect_currency_symbol
 
 logger = logging.getLogger(__name__)
 
-# ── Brand constants ───────────────────────────────────────────
-BRAND_DARK   = "1F4E78"   # headers, TOTAL row
-BRAND_MID    = "2E75B6"   # mid-blue accents
-BRAND_LIGHT  = "D6E4F0"   # subtotal rows
-ALT_ROW      = "F2F7FC"   # alternating row tint
-WHITE        = "FFFFFF"
-WARN_BG      = "FFF2CC"
-ERROR_BG     = "F8CBAD"
-FONT_NAME    = "Calibri"
-WEBSITE_URL  = "yourwebsite.com"
+# ── Brand constants (Premium palette — Prompt.txt spec) ───────
+BRAND_DARK     = "1F3A5F"   # deep navy — headers, TOTAL row
+BRAND_MID      = "2E75B6"   # professional blue — accents
+BRAND_LIGHT    = "EAF3FB"   # light fill — block backgrounds
+ALT_ROW        = "D9EAF7"   # alt row fill — striped tables
+WHITE          = "FFFFFF"
+TEXT_PRIMARY   = "1A1A1A"   # body text
+TEXT_SECONDARY = "666666"   # captions, supporting text
+RULE_LINE      = "C9D6E6"   # thin rule line
+STATUS_UNPAID  = "B7791F"   # amber
+STATUS_OVERDUE = "C0392B"   # red
+STATUS_PAID    = "2D6A3F"   # green
+WARN_BG        = "FFF2CC"
+ERROR_BG       = "F8CBAD"
+FONT_NAME      = "Calibri"
+WEBSITE_URL    = "yourwebsite.com"
 COMPANY_NAME_PLACEHOLDER = "[Your Company Name]"
 COMPANY_ADDR_PLACEHOLDER = "[Street Address  ·  City, State ZIP  ·  (000) 000-0000  ·  email@domain.com]"
 
@@ -39,7 +46,7 @@ PAYMENT_TERMS_LINES = [
 # ── Low-level cell helpers ────────────────────────────────────
 
 def _side():
-    return Side(style="thin", color="CCCCCC")
+    return Side(style="thin", color=RULE_LINE)
 
 
 def _border():
@@ -90,32 +97,90 @@ def _total_cell(cell, value, is_label=False, number_format=None):
         cell.number_format = number_format
 
 
+def _compute_status(due_date_value, today=None):
+    """
+    Return (label, color_hex) for the invoice status block.
+    Dynamic: OVERDUE if due_date < today, else UNPAID. PAID is not auto-detected.
+    """
+    today = today or _date.today()
+    due = None
+    if isinstance(due_date_value, datetime):
+        due = due_date_value.date()
+    elif isinstance(due_date_value, _date):
+        due = due_date_value
+
+    if due and due < today:
+        return "OVERDUE", STATUS_OVERDUE
+    return "UNPAID", STATUS_UNPAID
+
+
+def _apply_print_setup(ws, n_cols):
+    """Print-ready: portrait, fit-to-width, centered, slim margins, repeat header."""
+    ws.page_setup.orientation = ws.ORIENTATION_PORTRAIT
+    ws.page_setup.paperSize   = ws.PAPERSIZE_LETTER
+    ws.page_setup.fitToWidth  = 1
+    ws.page_setup.fitToHeight = 0
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins = PageMargins(
+        left=0.4, right=0.4, top=0.5, bottom=0.5, header=0.2, footer=0.2
+    )
+    ws.print_options.horizontalCentered = True
+    end_col = get_column_letter(n_cols)
+    ws.print_area = f"A1:{end_col}{ws.max_row}"
+
+
 def _footer(ws, row, n_cols):
-    """Two-part branded footer: 'Thank you' left, byline right."""
-    left_text  = "Thank you for your business."
-    right_text = f"[Your Name]  ·  Finance Automation Specialist  ·  {WEBSITE_URL}"
-    mid        = max(1, n_cols // 2)
+    """
+    Premium 3-part footer:
+      - 'Thank you for your business.' centered, italic
+      - Right block: signature line (underline) + 'Authorized Signature' caption
+      - Byline line centered below
+    """
+    # Row 1: Thank-you (centered across all cols)
+    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=n_cols)
+    c = ws.cell(row=row, column=1)
+    c.value = "Thank you for your business."
+    c.font  = Font(name=FONT_NAME, size=11, italic=True, color=TEXT_SECONDARY)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[row].height = 22
 
-    if mid > 1:
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=mid)
-    c_l = ws.cell(row=row, column=1)
-    c_l.value = left_text
-    c_l.font  = Font(name=FONT_NAME, size=10, italic=True, color="888888")
-    c_l.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    # Row 2: spacer
+    sig_row = row + 2
 
-    right_start = mid + 1
-    if right_start <= n_cols and right_start < n_cols:
+    # Signature line — right half of the sheet, bottom border only
+    sig_start = max(1, n_cols - 2)
+    if sig_start < n_cols:
         ws.merge_cells(
-            start_row=row, start_column=right_start,
-            end_row=row,   end_column=n_cols
+            start_row=sig_row, start_column=sig_start,
+            end_row=sig_row,   end_column=n_cols,
         )
-    if right_start <= n_cols:
-        c_r = ws.cell(row=row, column=right_start)
-        c_r.value = right_text
-        c_r.font  = Font(name=FONT_NAME, size=10, italic=True, color=BRAND_DARK)
-        c_r.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    c = ws.cell(row=sig_row, column=sig_start)
+    c.value = ""
+    c.border = Border(bottom=Side(style="medium", color=BRAND_DARK))
+    c.alignment = Alignment(horizontal="center", vertical="bottom")
+    ws.row_dimensions[sig_row].height = 28
 
-    ws.row_dimensions[row].height = 18
+    # 'Authorized Signature' caption directly below
+    cap_row = sig_row + 1
+    if sig_start < n_cols:
+        ws.merge_cells(
+            start_row=cap_row, start_column=sig_start,
+            end_row=cap_row,   end_column=n_cols,
+        )
+    c = ws.cell(row=cap_row, column=sig_start)
+    c.value = "Authorized Signature"
+    c.font  = Font(name=FONT_NAME, size=9, italic=True, color=TEXT_SECONDARY)
+    c.alignment = Alignment(horizontal="center", vertical="top")
+    ws.row_dimensions[cap_row].height = 14
+
+    # Byline (centered) two rows below caption
+    by_row = cap_row + 2
+    ws.merge_cells(start_row=by_row, start_column=1, end_row=by_row, end_column=n_cols)
+    c = ws.cell(row=by_row, column=1)
+    c.value = f"[Your Name]  ·  Finance Automation Specialist  ·  {WEBSITE_URL}"
+    c.font  = Font(name=FONT_NAME, size=9, italic=True, color=BRAND_DARK)
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    ws.row_dimensions[by_row].height = 16
 
 
 def _set_widths(ws, overrides=None, default=12, max_w=50):
@@ -188,29 +253,32 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
     ws.merge_cells("A2:D2")
     c = ws["A2"]
     c.value = COMPANY_NAME_PLACEHOLDER
-    c.font  = Font(name=FONT_NAME, bold=True, size=16, color=BRAND_DARK)
+    c.font  = Font(name=FONT_NAME, bold=True, size=18, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[2].height = 26
+    ws.row_dimensions[2].height = 32
 
     ws.merge_cells("E2:H2")
     c = ws["E2"]
     c.value = "INVOICE"
-    c.font  = Font(name=FONT_NAME, bold=True, size=18, color=WHITE)
+    c.font  = Font(name=FONT_NAME, bold=True, size=26, color=WHITE)
     c.fill  = PatternFill("solid", fgColor=BRAND_DARK)
-    c.alignment = Alignment(horizontal="right", vertical="center")
+    c.alignment = Alignment(horizontal="right", vertical="center", indent=1)
 
     ws.merge_cells("A3:D3")
     c = ws["A3"]
     c.value = COMPANY_ADDR_PLACEHOLDER
-    c.font  = Font(name=FONT_NAME, size=10, color="666666")
+    c.font  = Font(name=FONT_NAME, size=10, color=TEXT_SECONDARY)
     c.alignment = Alignment(horizontal="left", vertical="center")
+    # Thin rule under company block
+    c.border = Border(bottom=Side(style="thin", color=BRAND_MID))
 
     ws.merge_cells("E3:H3")
     c = ws["E3"]
     c.value = "Finance Automation Specialist"
     c.font  = Font(name=FONT_NAME, italic=True, size=10, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="right", vertical="center")
-    ws.row_dimensions[3].height = 18
+    c.border = Border(bottom=Side(style="thin", color=BRAND_MID))
+    ws.row_dimensions[3].height = 20
 
     # ── BILL TO + invoice meta (rows 7-10) ────────────────────
     is_single = len(ok_invoices) == 1
@@ -232,61 +300,73 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
         inv_date    = _date.today()
         due_date    = "—"
 
-    # BILL TO label (A7)
+    status_text, status_color = _compute_status(due_date)
+
+    # ── Boxed BILL TO block (rows 7-10, cols A:C) ─────────────
+    # Header bar (row 7)
+    ws.merge_cells("A7:C7")
     c = ws.cell(row=7, column=1)
     c.value = "BILL TO"
     c.font  = Font(name=FONT_NAME, bold=True, size=9, color=WHITE)
     c.fill  = PatternFill("solid", fgColor=BRAND_DARK)
     c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-    ws.row_dimensions[7].height = 16
+    ws.row_dimensions[7].height = 18
 
-    # Client name (A8:C8)
-    ws.merge_cells("A8:C8")
-    c = ws.cell(row=8, column=1)
-    c.value = client_name
-    c.font  = Font(name=FONT_NAME, bold=True, size=11, color="1A1F2B")
-    c.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[8].height = 18
+    # Three content rows — light fill, side borders, bottom on last row
+    box_side   = Side(style="thin", color=RULE_LINE)
+    box_bottom = Side(style="medium", color=BRAND_DARK)
+    box_fill   = PatternFill("solid", fgColor=BRAND_LIGHT)
 
-    # Client address line 1 (A9:C9)
-    ws.merge_cells("A9:C9")
-    c = ws.cell(row=9, column=1)
-    c.value = client_addr
-    c.font  = Font(name=FONT_NAME, size=10, color="555555")
-    c.alignment = Alignment(horizontal="left", vertical="center")
+    def _box_row(r, text, is_last=False, bold=False, size=11, color=TEXT_PRIMARY):
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=3)
+        cell = ws.cell(row=r, column=1)
+        cell.value = text
+        cell.font  = Font(name=FONT_NAME, bold=bold, size=size, color=color)
+        cell.fill  = box_fill
+        cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        cell.border = Border(
+            left=box_side, right=box_side,
+            bottom=box_bottom if is_last else None,
+        )
+        ws.row_dimensions[r].height = 20 if bold else 18
 
-    # Client city/zip (A10:C10)
-    ws.merge_cells("A10:C10")
-    c = ws.cell(row=10, column=1)
-    c.value = client_city
-    c.font  = Font(name=FONT_NAME, size=10, color="555555")
-    c.alignment = Alignment(horizontal="left", vertical="center")
+    _box_row(8,  client_name, bold=True, size=12)
+    _box_row(9,  client_addr, color=TEXT_SECONDARY, size=10)
+    _box_row(10, client_city, is_last=True, color=TEXT_SECONDARY, size=10)
 
-    # Right block: meta (F7:G7..G10)
+    # Right block: meta (F7:G7..G10) — labels with light fill, values bold
     meta = [
-        ("Invoice #", inv_num,   None),
-        ("Date",      inv_date,  "mmm dd, yyyy"),
-        ("Due Date",  due_date,  "mmm dd, yyyy"),
-        ("Status",    "✓ Paid / Unpaid", None),
+        ("Invoice #", inv_num,     None,              False),
+        ("Date",      inv_date,    "mmm dd, yyyy",    False),
+        ("Due Date",  due_date,    "mmm dd, yyyy",    False),
+        ("Status",    status_text, None,              True),  # styled differently
     ]
-    for i, (label, value, fmt) in enumerate(meta):
+    for i, (label, value, fmt, is_status) in enumerate(meta):
         r = 7 + i
         c_lbl = ws.cell(row=r, column=6)
         c_lbl.value = label
         c_lbl.font  = Font(name=FONT_NAME, bold=True, size=10, color=BRAND_DARK)
         c_lbl.fill  = PatternFill("solid", fgColor=BRAND_LIGHT)
         c_lbl.alignment = Alignment(horizontal="right", vertical="center")
-        c_lbl.border = _border()
+        c_lbl.border = Border(left=box_side, right=box_side,
+                              top=box_side if i == 0 else None,
+                              bottom=box_side if i == len(meta) - 1 else None)
 
         ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=8)
         c_val = ws.cell(row=r, column=7)
         c_val.value = value
-        c_val.font  = Font(name=FONT_NAME, size=10)
-        c_val.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-        c_val.border = _border()
+        if is_status:
+            c_val.font = Font(name=FONT_NAME, bold=True, size=11, color=status_color)
+            c_val.alignment = Alignment(horizontal="center", vertical="center")
+        else:
+            c_val.font = Font(name=FONT_NAME, size=10, color=TEXT_PRIMARY)
+            c_val.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        c_val.border = Border(left=box_side, right=box_side,
+                              top=box_side if i == 0 else None,
+                              bottom=box_side if i == len(meta) - 1 else None)
         if fmt and isinstance(value, datetime):
             c_val.number_format = fmt
-        ws.row_dimensions[r].height = 18
+        ws.row_dimensions[r].height = 20 if is_status else 18
 
     # ── Column headers (row 12) ───────────────────────────────
     header_row = 12
@@ -360,7 +440,7 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
         )
         c = ws.cell(row=row, column=1)
         c.value = "No line items extracted"
-        c.font  = Font(name=FONT_NAME, italic=True, size=11, color="888888")
+        c.font  = Font(name=FONT_NAME, italic=True, size=11, color=TEXT_SECONDARY)
         c.alignment = Alignment(horizontal="center", vertical="center")
         row += 1
 
@@ -409,7 +489,7 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
         ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
         c = ws.cell(row=r, column=1)
         c.value = text
-        c.font  = Font(name=FONT_NAME, size=10, color="555555")
+        c.font  = Font(name=FONT_NAME, size=10, color=TEXT_SECONDARY)
         c.alignment = Alignment(horizontal="left", vertical="center")
         ws.row_dimensions[r].height = 16
 
@@ -423,6 +503,7 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
         ws,
         {"A": 6, "B": 38, "C": 22, "D": 8, "E": 14, "F": 10, "G": 14, "H": 16},
     )
+    _apply_print_setup(ws, N)
 
 
 # ── Sheet 2: Line Items (7 cols A-G) ──────────────────────────
@@ -507,7 +588,7 @@ def _build_lineitems_sheet(ws, invoices, sums, present, symbol):
         ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=N)
         c = ws.cell(row=5, column=1)
         c.value = "No line items extracted"
-        c.font  = Font(name=FONT_NAME, italic=True, size=11, color="888888")
+        c.font  = Font(name=FONT_NAME, italic=True, size=11, color=TEXT_SECONDARY)
         c.alignment = Alignment(horizontal="center", vertical="center")
         row = 6
 
@@ -540,6 +621,7 @@ def _build_lineitems_sheet(ws, invoices, sums, present, symbol):
         ws,
         {"A": 6, "B": 24, "C": 16, "D": 38, "E": 8, "F": 14, "G": 16},
     )
+    _apply_print_setup(ws, N)
 
 
 # ── Sheet 3: Automation Report (3 cols A-C) ───────────────────
@@ -559,7 +641,7 @@ def _build_report_sheet(ws, invoices, ok_invoices, err_count,
     ws.merge_cells("B2:C2")
     c = ws["B2"]
     c.value = f"Generated: {_date.today().strftime('%B %d, %Y')}"
-    c.font  = Font(name=FONT_NAME, italic=True, size=10, color="888888")
+    c.font  = Font(name=FONT_NAME, italic=True, size=10, color=TEXT_SECONDARY)
     c.alignment = Alignment(horizontal="right", vertical="center")
 
     # ── Headers (row 4) ───────────────────────────────────────
@@ -637,6 +719,7 @@ def _build_report_sheet(ws, invoices, ok_invoices, err_count,
     _footer(ws, row, N)
 
     _set_widths(ws, {"A": 32, "B": 28, "C": 18})
+    _apply_print_setup(ws, N)
 
 
 # ── Public API ────────────────────────────────────────────────

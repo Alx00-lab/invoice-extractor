@@ -31,12 +31,13 @@ st.markdown("""
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
     :root {
-        --navy:    #1F3864;
+        --navy:    #1F3A5F;
         --blue:    #2E75B6;
-        --ink:     #1A1F2B;
-        --muted:   #6B7280;
-        --line:    #E6E9EF;
-        --bg-soft: #F8F9FA;
+        --ink:     #1A1A1A;
+        --muted:   #666666;
+        --line:    #C9D6E6;
+        --bg-soft: #EAF3FB;
+        --alt-row: #D9EAF7;
         --ok:      #2D6A3F;
         --warn:    #B7791F;
         --err:     #C0392B;
@@ -51,11 +52,11 @@ st.markdown("""
 
     /* ── Hero ── */
     .hero {
-        background: linear-gradient(135deg, #1F3864 0%, #2E75B6 100%);
+        background: linear-gradient(135deg, #1F3A5F 0%, #2E75B6 100%);
         border-radius: 16px;
         padding: 2.2rem 2.4rem;
         color: #fff;
-        box-shadow: 0 10px 30px rgba(31,56,100,0.18);
+        box-shadow: 0 10px 30px rgba(31,58,95,0.18);
         margin-bottom: 1.6rem;
     }
     .hero h1 {
@@ -109,7 +110,7 @@ st.markdown("""
         border-color: var(--blue);
         color: var(--navy);
         transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(31,56,100,0.10);
+        box-shadow: 0 4px 12px rgba(31,58,95,0.10);
     }
     .stButton button:active {
         transform: translateY(0);
@@ -118,20 +119,20 @@ st.markdown("""
 
     /* Primary CTA — Extract Data */
     .stButton button[kind="primary"] {
-        background: linear-gradient(135deg, #1F3864 0%, #2E75B6 100%);
+        background: linear-gradient(135deg, #1F3A5F 0%, #2E75B6 100%);
         color: #fff;
         border: none;
-        box-shadow: 0 4px 14px rgba(31,56,100,0.22);
+        box-shadow: 0 4px 14px rgba(31,58,95,0.22);
     }
     .stButton button[kind="primary"]:hover {
         background: linear-gradient(135deg, #1A305A 0%, #286AA8 100%);
         color: #fff;
         transform: translateY(-1px);
-        box-shadow: 0 6px 18px rgba(31,56,100,0.30);
+        box-shadow: 0 6px 18px rgba(31,58,95,0.30);
     }
     .stButton button[kind="primary"]:active {
         transform: translateY(0);
-        box-shadow: 0 2px 6px rgba(31,56,100,0.22);
+        box-shadow: 0 2px 6px rgba(31,58,95,0.22);
     }
 
     /* Secondary kind — outline */
@@ -151,7 +152,7 @@ st.markdown("""
         background: var(--navy);
         color: #fff;
         border: none;
-        box-shadow: 0 4px 14px rgba(31,56,100,0.22);
+        box-shadow: 0 4px 14px rgba(31,58,95,0.22);
     }
     div[data-testid="stDownloadButton"] button:hover {
         background: var(--blue);
@@ -161,7 +162,7 @@ st.markdown("""
     }
     div[data-testid="stDownloadButton"] button:active {
         transform: translateY(0);
-        box-shadow: 0 2px 6px rgba(31,56,100,0.22);
+        box-shadow: 0 2px 6px rgba(31,58,95,0.22);
     }
 
     /* Focus ring — keyboard accessibility */
