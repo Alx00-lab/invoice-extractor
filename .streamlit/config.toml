@@ -7,3 +7,24 @@ font = "sans serif"
 
 [browser]
 gatherUsageStats = false
+
+# Hard cap at the framework level — Streamlit refuses uploads beyond this
+# before our Python validation ever runs. Keeps abuse off the network entirely.
+# Per-batch (10 MB) and per-file (5 MB) caps are enforced in app.py.
+[server]
+maxUploadSize = 15
+# Cross-Site Request Forgery protection on the upload endpoint.
+enableXsrfProtection = true
+# Disallow cross-origin requests. Combined with XSRF this blocks
+# other sites from triggering uploads / extractions in a user's session.
+enableCORS = false
+# Reduce websocket attack surface for embedded deployments.
+enableWebsocketCompression = false
+
+[client]
+# Hide raw Python tracebacks from end users — they can leak file paths,
+# library internals, and occasionally credentials embedded in env strings.
+showErrorDetails = false
+# Toolbar entry to "Rerun" / "Settings" is for developers, not anonymous demo
+# visitors. Hide it to remove the "View source / Manage app" affordances.
+toolbarMode = "minimal"

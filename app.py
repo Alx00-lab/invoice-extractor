@@ -13,9 +13,20 @@ from extractor import (
     extract_text_from_pdf,
     parse_invoice,
     generate_batch_excel,
+    redact,
+    safe_filename,
+    file_id,
 )
 
 logging.basicConfig(level=logging.INFO)
+
+# ── Demo guardrails ───────────────────────────────────────────
+# Every OpenAI call costs real money. These caps bound the worst-case
+# spend per anonymous visitor. Tune in one place; UI text reads from here.
+MAX_INVOICES_PER_BATCH      = 3
+MAX_FILE_SIZE_MB            = 5
+MAX_BATCH_SIZE_MB           = 10
+MAX_EXTRACTIONS_PER_SESSION = 9     # 3 full batches before quota locks
 
 # ── Page config ───────────────────────────────────────────────
 st.set_page_config(
@@ -227,6 +238,16 @@ with st.sidebar:
         "4. Download one clean Excel file"
     )
     st.divider()
+    st.markdown("### Demo limits")
+    st.session_state.setdefault("extractions_used", 0)
+    remaining_quota = max(0, MAX_EXTRACTIONS_PER_SESSION - st.session_state.extractions_used)
+    st.markdown(
+        f"- **{MAX_INVOICES_PER_BATCH}** invoices max per batch\n"
+        f"- **{MAX_FILE_SIZE_MB} MB** max per file\n"
+        f"- **{remaining_quota} / {MAX_EXTRACTIONS_PER_SESSION}** extractions left this session"
+    )
+    st.caption("Need higher volume? Book a free audit below the results.")
+    st.divider()
     st.markdown("Built by **Alex** · Finance Automation Specialist")
 
 # ── Session state ─────────────────────────────────────────────
@@ -242,7 +263,7 @@ if SAMPLE_PATH.exists():
             st.session_state.use_sample = True
             st.session_state.use_sample_batch = False
     with col2:
-        if st.button("📦 Try 5 invoices →", use_container_width=True):
+        if st.button(f"📦 Try {MAX_INVOICES_PER_BATCH} invoices →", use_container_width=True):
             st.session_state.use_sample_batch = True
             st.session_state.use_sample = False
     with col3:
@@ -253,11 +274,48 @@ else:
 
 # ── Upload ────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
-    "📁 Upload your invoices (PDF — multiple allowed)",
+    f"📁 Upload your invoices (PDF — up to {MAX_INVOICES_PER_BATCH} per batch)",
     type=["pdf"],
     accept_multiple_files=True,
-    help="Text-based PDFs only. Scanned/image documents are not supported in this version.",
+    help=(
+        f"Text-based PDFs only. Max {MAX_INVOICES_PER_BATCH} files per batch, "
+        f"{MAX_FILE_SIZE_MB} MB per file, {MAX_BATCH_SIZE_MB} MB total. "
+        f"Demo capped at {MAX_EXTRACTIONS_PER_SESSION} extractions per session."
+    ),
 )
+
+# ── Upload validation (cap count, sizes — runs BEFORE any API call) ──
+if uploaded_files:
+    if len(uploaded_files) > MAX_INVOICES_PER_BATCH:
+        st.error(
+            f"⚠️ This demo accepts up to **{MAX_INVOICES_PER_BATCH} invoices per batch**. "
+            f"You uploaded **{len(uploaded_files)}**. "
+            f"Remove {len(uploaded_files) - MAX_INVOICES_PER_BATCH} file(s) and try again, "
+            "or book a free audit (link below) for higher-volume processing."
+        )
+        st.stop()
+
+    oversized = [
+        f"`{f.name}` ({f.size / (1024*1024):.1f} MB)"
+        for f in uploaded_files
+        if f.size > MAX_FILE_SIZE_MB * 1024 * 1024
+    ]
+    if oversized:
+        st.error(
+            f"⚠️ The following file(s) exceed the **{MAX_FILE_SIZE_MB} MB per-file limit**: "
+            + ", ".join(oversized)
+            + ". Please trim or split before uploading."
+        )
+        st.stop()
+
+    total_mb = sum(f.size for f in uploaded_files) / (1024 * 1024)
+    if total_mb > MAX_BATCH_SIZE_MB:
+        st.error(
+            f"⚠️ Total batch size is **{total_mb:.1f} MB**, "
+            f"exceeding the **{MAX_BATCH_SIZE_MB} MB** batch limit. "
+            "Please remove some files."
+        )
+        st.stop()
 
 # ── Resolve which files to process ────────────────────────────
 files_to_process = []
@@ -265,7 +323,7 @@ if st.session_state.use_sample_batch:
     if SAMPLE_PATH.exists():
         files_to_process = [
             (f"sample_invoice_{i}.pdf", str(SAMPLE_PATH), "path")
-            for i in range(1, 6)
+            for i in range(1, MAX_INVOICES_PER_BATCH + 1)
         ]
     else:
         st.session_state.use_sample_batch = False
@@ -285,6 +343,28 @@ elif uploaded_files:
 if files_to_process and not api_key:
     st.error("⚠️ This demo is temporarily unavailable. Please check back shortly.")
     st.stop()
+
+# ── Per-session quota gate ────────────────────────────────────
+# Hard stop the moment a request would exceed the per-session budget.
+# Streamlit session_state survives page interactions but resets on full
+# refresh — fine as a deterrent; for true rate-limiting move this to IP+Redis.
+if files_to_process:
+    used      = st.session_state.get("extractions_used", 0)
+    remaining = MAX_EXTRACTIONS_PER_SESSION - used
+
+    if remaining <= 0:
+        st.error(
+            f"⚠️ You've used all **{MAX_EXTRACTIONS_PER_SESSION}** demo extractions for "
+            "this session. For unlimited processing, book a free audit (link below)."
+        )
+        st.stop()
+
+    if len(files_to_process) > remaining:
+        st.error(
+            f"⚠️ This batch needs **{len(files_to_process)}** extractions but you only "
+            f"have **{remaining}** left this session. Reduce the batch or book an audit."
+        )
+        st.stop()
 
 # ── Process ───────────────────────────────────────────────────
 if files_to_process:
@@ -314,8 +394,14 @@ if files_to_process:
                 data     = parse_invoice(raw_text, api_key)
                 results.append({"filename": filename, "status": "ok", "data": data})
             except (ValueError, RuntimeError) as e:
-                logging.error(f"Failed on {filename}: {e}")
-                results.append({"filename": filename, "status": "error", "error": str(e)})
+                # Never log the raw filename or raw exception — both can be PII.
+                logging.error(f"Extraction failed [{file_id(filename)}]: {redact(e)}")
+                results.append({
+                    "filename": filename,
+                    "status": "error",
+                    # User sees a scrubbed message; raw exception stays in logs.
+                    "error": redact(e),
+                })
             progress.progress((i + 1) / len(files_to_process))
 
         status_text.empty()
@@ -375,20 +461,30 @@ if files_to_process:
             try:
                 excel_bytes = generate_batch_excel(results, start_time=_start)
             except Exception as e:
-                st.error(f"Could not generate Excel: {e}")
+                # Log full (redacted) for debugging; show a generic message.
+                logging.error(f"Excel generation failed: {redact(e)}")
+                st.error("Could not generate the Excel file. Please try again.")
                 st.stop()
 
-        download_name = (
-            "invoices_extracted.xlsx"
-            if len(results) > 1
-            else f"{results[0]['filename'].replace('.pdf', '')}_extracted.xlsx"
-        )
+        if len(results) > 1:
+            download_name = "invoices_extracted.xlsx"
+        else:
+            stem = results[0]["filename"].rsplit(".pdf", 1)[0]
+            download_name = safe_filename(
+                f"{stem}_extracted.xlsx",
+                default="invoice_extracted.xlsx",
+            )
         st.download_button(
             label=f"📥 Download consolidated Excel ({len(results)} invoice(s))",
             data=excel_bytes,
             file_name=download_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
+        )
+
+        # ── Charge the session budget (every attempt counts, success or fail) ──
+        st.session_state.extractions_used = (
+            st.session_state.get("extractions_used", 0) + len(results)
         )
 
         # ── CTA (Fix 3) ───────────────────────────────────────

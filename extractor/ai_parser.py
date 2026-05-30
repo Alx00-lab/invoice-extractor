@@ -13,6 +13,7 @@ from openai import (
 )
 
 from .validator import validate_invoice
+from .security import redact
 
 logger = logging.getLogger(__name__)
 
@@ -120,7 +121,7 @@ def parse_invoice(text: str, api_key: str) -> dict:
             break
 
         except json.JSONDecodeError as e:
-            logger.error(f"JSON parsing failed: {e}")
+            logger.error(f"JSON parsing failed: {redact(e)}")
             raise RuntimeError("The AI returned an invalid response. Please try again.")
 
         except _RETRYABLE as e:
@@ -128,27 +129,30 @@ def parse_invoice(text: str, api_key: str) -> dict:
             if attempt < MAX_RETRIES:
                 delay = BASE_DELAY * (2 ** (attempt - 1))
                 logger.warning(
-                    f"Transient API error (attempt {attempt}/{MAX_RETRIES}): {e}. "
+                    f"Transient API error (attempt {attempt}/{MAX_RETRIES}): {redact(e)}. "
                     f"Retrying in {delay:.0f}s."
                 )
                 time.sleep(delay)
                 continue
-            logger.error(f"API failed after {MAX_RETRIES} attempts: {e}")
+            logger.error(f"API failed after {MAX_RETRIES} attempts: {redact(e)}")
             raise RuntimeError(
                 f"AI service is temporarily unavailable (after {MAX_RETRIES} attempts). "
                 "Please try again in a moment."
             )
 
         except APIError as e:
-            logger.error(f"OpenAI API error: {e}")
-            raise RuntimeError(f"AI processing failed: {e}")
+            logger.error(f"OpenAI API error: {redact(e)}")
+            # Do NOT include the SDK exception in the user message: it can
+            # include request IDs, partial keys, and prompt fragments.
+            raise RuntimeError("AI processing failed. Please try again.")
 
         except Exception as e:
-            logger.error(f"Unexpected error: {e}")
-            raise RuntimeError(f"AI processing failed: {e}")
+            logger.error(f"Unexpected error: {redact(e)}")
+            raise RuntimeError("AI processing failed. Please try again.")
 
     if data is None:
-        raise RuntimeError(f"AI processing failed: {last_err}")
+        logger.error(f"AI returned no data; last error: {redact(last_err)}")
+        raise RuntimeError("AI processing failed. Please try again.")
 
     # Validation happens in Python, not in the model.
     data["validation_warning"] = validate_invoice(data)

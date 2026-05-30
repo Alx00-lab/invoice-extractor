@@ -1,11 +1,47 @@
+# ── Secrets — never commit these ──────────────────────────────
 .env
-.venv/
+.env.*
+!.env.example
+.streamlit/secrets.toml
+*.key
+*.pem
+*credentials*
+*secret*
+!*secret*.example*
+
+# ── Generated artifacts (Excel outputs, test files) ───────────
+# Excel outputs are written into output/ by design; never commit
+# spreadsheets at the repo root — they may contain real client data.
+*.xlsx
+*.xlsm
+!samples/sample_template.xlsx
+output/
+
+# ── Real invoice PDFs must never be committed ─────────────────
+# samples/sample_invoice.pdf is the only PDF allowed in the repo.
+*.pdf
+!samples/sample_invoice.pdf
+
+# ── Python ────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
-.DS_Store
-output/*.xlsx
-.streamlit/secrets.toml
+*.pyd
 *.egg-info/
+.venv/
+venv/
+.python-version
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Editors / OS junk ─────────────────────────────────────────
 .vscode/
-test_output.xlsx
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── Streamlit caches / local state ────────────────────────────
+.streamlit/cache/
+.streamlit/logs/

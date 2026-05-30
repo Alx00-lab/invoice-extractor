@@ -1,6 +1,8 @@
 import pdfplumber
 import logging
 
+from .security import redact
+
 logger = logging.getLogger(__name__)
 
 
@@ -8,6 +10,9 @@ def extract_text_from_pdf(file) -> str:
     """
     Accepts a file path (str) or a file-like object (Streamlit UploadedFile).
     Returns all extracted text or raises ValueError if empty.
+
+    Error messages are scrubbed of paths/keys before they reach callers — those
+    strings flow to the UI and to logs.
     """
     try:
         with pdfplumber.open(file) as pdf:
@@ -33,5 +38,7 @@ def extract_text_from_pdf(file) -> str:
     except ValueError:
         raise
     except Exception as e:
-        logger.error(f"Failed to read PDF: {e}")
-        raise RuntimeError(f"Could not read the PDF file: {e}")
+        logger.error(f"Failed to read PDF: {redact(e)}")
+        # Do NOT include raw exception in user-facing message — pdfplumber
+        # tracebacks regularly contain absolute host paths.
+        raise RuntimeError("Could not read the PDF file. It may be corrupted or password-protected.")
