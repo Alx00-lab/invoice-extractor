@@ -36,6 +36,9 @@ No explanations, no markdown, no extra text — just the JSON.
 Required JSON structure:
 {
   "vendor_name": "string or null",
+  "client_name": "string or null",
+  "client_address": "string or null",
+  "client_city_zip": "string or null",
   "invoice_number": "string or null",
   "invoice_date": "string or null",
   "due_date": "string or null",
@@ -54,6 +57,9 @@ Required JSON structure:
 }
 
 Rules:
+- `vendor_name` is the SELLER (the company issuing the invoice).
+- `client_name`, `client_address`, `client_city_zip` describe the BUYER — the entity labeled "Bill To", "Sold To", "Customer", etc. Use null if the buyer is not clearly identified.
+- `client_address` = street line only. `client_city_zip` = city/state/postal-code line only.
 - If a field is not found, use null.
 - For dates, keep the original format found in the document.
 - For monetary values, keep the original string exactly as written, including the currency symbol.

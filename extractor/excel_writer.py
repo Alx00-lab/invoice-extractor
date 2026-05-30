@@ -1,7 +1,8 @@
 import io
 import logging
+import re
 import time
-from datetime import date as _date
+from datetime import date as _date, datetime
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
@@ -20,7 +21,19 @@ WARN_BG      = "FFF2CC"
 ERROR_BG     = "F8CBAD"
 FONT_NAME    = "Calibri"
 WEBSITE_URL  = "yourwebsite.com"
-COMPANY_NAME = "Your Company Name"
+COMPANY_NAME_PLACEHOLDER = "[Your Company Name]"
+COMPANY_ADDR_PLACEHOLDER = "[Street Address  ·  City, State ZIP  ·  (000) 000-0000  ·  email@domain.com]"
+
+CLIENT_NAME_PLACEHOLDER   = "[Client / Company Name]"
+CLIENT_ADDR_PLACEHOLDER   = "[Street Address]"
+CLIENT_CITY_PLACEHOLDER   = "[City, State  ZIP]"
+
+PAYMENT_TERMS_LINES = [
+    "Payment Terms",
+    "Payment due within 30 days of invoice date.",
+    "Bank transfer preferred  ·  [Bank Name · Account # · Routing #]",
+    "Questions?  [your@email.com]",
+]
 
 
 # ── Low-level cell helpers ────────────────────────────────────
@@ -42,15 +55,18 @@ def _header_cell(cell, text, size=11):
     cell.border = _border()
 
 
-def _data_cell(cell, value, alt=False, align="left", bold=False, size=11):
+def _data_cell(cell, value, alt=False, align="left", bold=False, size=11,
+               number_format=None):
     cell.value = value if value not in (None, "null", "") else "—"
     cell.font = Font(name=FONT_NAME, size=size, bold=bold)
     cell.fill = PatternFill("solid", fgColor=ALT_ROW if alt else WHITE)
     cell.border = _border()
     cell.alignment = Alignment(horizontal=align, vertical="center", wrap_text=True)
+    if number_format:
+        cell.number_format = number_format
 
 
-def _subtotal_cell(cell, value, is_label=False):
+def _subtotal_cell(cell, value, is_label=False, number_format=None):
     cell.value = value
     cell.font = Font(name=FONT_NAME, bold=True, size=11, color=BRAND_DARK)
     cell.fill = PatternFill("solid", fgColor=BRAND_LIGHT)
@@ -58,9 +74,11 @@ def _subtotal_cell(cell, value, is_label=False):
         horizontal="left" if is_label else "right", vertical="center"
     )
     cell.border = _border()
+    if number_format:
+        cell.number_format = number_format
 
 
-def _total_cell(cell, value, is_label=False):
+def _total_cell(cell, value, is_label=False, number_format=None):
     cell.value = value
     cell.font = Font(name=FONT_NAME, bold=True, size=11, color=WHITE)
     cell.fill = PatternFill("solid", fgColor=BRAND_DARK)
@@ -68,12 +86,14 @@ def _total_cell(cell, value, is_label=False):
         horizontal="left" if is_label else "right", vertical="center"
     )
     cell.border = _border()
+    if number_format:
+        cell.number_format = number_format
 
 
 def _footer(ws, row, n_cols):
     """Two-part branded footer: 'Thank you' left, byline right."""
     left_text  = "Thank you for your business."
-    right_text = f"Built by Alex · Finance Automation Specialist · {WEBSITE_URL}"
+    right_text = f"[Your Name]  ·  Finance Automation Specialist  ·  {WEBSITE_URL}"
     mid        = max(1, n_cols // 2)
 
     if mid > 1:
@@ -123,118 +143,164 @@ def _fmt(val, symbol="$"):
     return f"{symbol}{val:,.2f}"
 
 
+def _excel_currency_format(symbol="$"):
+    """Build an Excel number format string for the detected currency symbol."""
+    safe = symbol.replace('"', '')
+    return f'"{safe}"#,##0.00'
+
+
+def _parse_date(s):
+    """Best-effort parse of a date string into a datetime. Returns the original
+    string if no known format matches — keeps display intact for exotic inputs."""
+    if not s or not isinstance(s, str):
+        return s
+    s = s.strip()
+    for fmt in (
+        "%Y-%m-%d", "%Y/%m/%d",
+        "%m/%d/%Y", "%m-%d-%Y",
+        "%d/%m/%Y", "%d-%m-%Y",
+        "%B %d, %Y", "%b %d, %Y",
+        "%d %B %Y", "%d %b %Y",
+    ):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return s
+
+
 # ── Sheet 1: Invoice Summary (8 cols A-H) ─────────────────────
 
 def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
     ws.title = "Invoice Summary"
     N = 8  # columns A through H
 
-    # ── Company header (rows 1-2) ──────────────────────────────
-    ws.merge_cells("A1:D1")
-    c = ws["A1"]
-    c.value = COMPANY_NAME
-    c.font  = Font(name=FONT_NAME, bold=True, size=14, color=BRAND_DARK)
-    c.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[1].height = 30
+    money_fmt = _excel_currency_format(symbol)
+    pct_fmt   = "0.00%"
 
-    ws.merge_cells("E1:H1")
-    c = ws["E1"]
-    c.value = "INVOICE"
-    c.font  = Font(name=FONT_NAME, bold=True, size=14, color=WHITE)
-    c.fill  = PatternFill("solid", fgColor=BRAND_DARK)
-    c.alignment = Alignment(horizontal="right", vertical="center")
+    # Derive a single tax rate for per-line tax columns (matches reference look).
+    if present["subtotal"] and present["tax"] and sums["subtotal"]:
+        line_tax_rate = sums["tax"] / sums["subtotal"]
+    else:
+        line_tax_rate = 0.0
+
+    # ── Company header (rows 2-3) ─────────────────────────────
+    ws.merge_cells("A2:D2")
+    c = ws["A2"]
+    c.value = COMPANY_NAME_PLACEHOLDER
+    c.font  = Font(name=FONT_NAME, bold=True, size=16, color=BRAND_DARK)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[2].height = 26
 
     ws.merge_cells("E2:H2")
     c = ws["E2"]
+    c.value = "INVOICE"
+    c.font  = Font(name=FONT_NAME, bold=True, size=18, color=WHITE)
+    c.fill  = PatternFill("solid", fgColor=BRAND_DARK)
+    c.alignment = Alignment(horizontal="right", vertical="center")
+
+    ws.merge_cells("A3:D3")
+    c = ws["A3"]
+    c.value = COMPANY_ADDR_PLACEHOLDER
+    c.font  = Font(name=FONT_NAME, size=10, color="666666")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+
+    ws.merge_cells("E3:H3")
+    c = ws["E3"]
     c.value = "Finance Automation Specialist"
     c.font  = Font(name=FONT_NAME, italic=True, size=10, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="right", vertical="center")
-    ws.row_dimensions[2].height = 18
+    ws.row_dimensions[3].height = 18
 
-    # row 3 is intentionally empty
-    header_start = 4
+    # ── BILL TO + invoice meta (rows 7-10) ────────────────────
+    is_single = len(ok_invoices) == 1
+    d_single  = ok_invoices[0].get("data", {}) if is_single else {}
 
-    # ── BILL TO section (single invoice) or batch note ─────────
-    if len(ok_invoices) == 1:
-        d = ok_invoices[0].get("data", {})
-
-        # Left block: BILL TO label + vendor
-        ws.merge_cells(start_row=4, start_column=1, end_row=4, end_column=3)
-        c = ws.cell(row=4, column=1)
-        c.value = "BILL TO"
-        c.font  = Font(name=FONT_NAME, bold=True, size=9, color=WHITE)
-        c.fill  = PatternFill("solid", fgColor=BRAND_DARK)
-        c.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[4].height = 16
-
-        ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=3)
-        c = ws.cell(row=5, column=1)
-        c.value = d.get("vendor_name") or "—"
-        c.font  = Font(name=FONT_NAME, bold=True, size=11)
-        c.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[5].height = 18
-
-        ws.merge_cells(start_row=6, start_column=1, end_row=7, end_column=3)
-        c = ws.cell(row=6, column=1)
-        c.value = d.get("payment_terms") or ""
-        c.font  = Font(name=FONT_NAME, size=10, color="555555")
-        c.alignment = Alignment(horizontal="left", vertical="top", wrap_text=True)
-
-        # Right block: invoice meta
-        meta = [
-            ("Invoice #", d.get("invoice_number") or "—"),
-            ("Date",      d.get("invoice_date")   or "—"),
-            ("Due Date",  d.get("due_date")        or "—"),
-            ("Status",    "Unpaid"),
-        ]
-        for i, (label, value) in enumerate(meta):
-            r = 4 + i
-            c_lbl = ws.cell(row=r, column=6)
-            c_lbl.value = label
-            c_lbl.font  = Font(name=FONT_NAME, bold=True, size=10, color=BRAND_DARK)
-            c_lbl.fill  = PatternFill("solid", fgColor=BRAND_LIGHT)
-            c_lbl.alignment = Alignment(horizontal="right", vertical="center")
-            c_lbl.border = _border()
-
-            ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=8)
-            c_val = ws.cell(row=r, column=7)
-            c_val.value = value
-            c_val.font  = Font(name=FONT_NAME, size=10)
-            c_val.alignment = Alignment(horizontal="left", vertical="center")
-            c_val.border = _border()
-            ws.row_dimensions[r].height = 18
-
-        header_start = 9  # row 8 = empty spacer
-
+    if is_single:
+        client_name = d_single.get("client_name") or CLIENT_NAME_PLACEHOLDER
+        client_addr = d_single.get("client_address") or CLIENT_ADDR_PLACEHOLDER
+        client_city = d_single.get("client_city_zip") or CLIENT_CITY_PLACEHOLDER
+        inv_num     = d_single.get("invoice_number") or "—"
+        inv_date    = _parse_date(d_single.get("invoice_date"))
+        due_date    = _parse_date(d_single.get("due_date"))
     else:
-        # Multiple invoices — compact batch banner
-        ws.merge_cells(
-            start_row=header_start, start_column=1,
-            end_row=header_start,   end_column=N
-        )
-        c = ws.cell(row=header_start, column=1)
         n_err = len(invoices) - len(ok_invoices)
-        c.value = (
-            f"Batch — {len(ok_invoices)} invoice(s) processed"
-            + (f" · {n_err} error(s)" if n_err else "")
-        )
-        c.font  = Font(name=FONT_NAME, bold=True, size=11, color=WHITE)
-        c.fill  = PatternFill("solid", fgColor=BRAND_MID)
-        c.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[header_start].height = 22
-        header_start += 2  # skip one empty row
+        client_name = f"Batch — {len(ok_invoices)} invoice(s) processed"
+        client_addr = f"{n_err} error(s)" if n_err else ""
+        client_city = ""
+        inv_num     = "—"
+        inv_date    = _date.today()
+        due_date    = "—"
 
-    # ── Column headers ─────────────────────────────────────────
+    # BILL TO label (A7)
+    c = ws.cell(row=7, column=1)
+    c.value = "BILL TO"
+    c.font  = Font(name=FONT_NAME, bold=True, size=9, color=WHITE)
+    c.fill  = PatternFill("solid", fgColor=BRAND_DARK)
+    c.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    ws.row_dimensions[7].height = 16
+
+    # Client name (A8:C8)
+    ws.merge_cells("A8:C8")
+    c = ws.cell(row=8, column=1)
+    c.value = client_name
+    c.font  = Font(name=FONT_NAME, bold=True, size=11, color="1A1F2B")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[8].height = 18
+
+    # Client address line 1 (A9:C9)
+    ws.merge_cells("A9:C9")
+    c = ws.cell(row=9, column=1)
+    c.value = client_addr
+    c.font  = Font(name=FONT_NAME, size=10, color="555555")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Client city/zip (A10:C10)
+    ws.merge_cells("A10:C10")
+    c = ws.cell(row=10, column=1)
+    c.value = client_city
+    c.font  = Font(name=FONT_NAME, size=10, color="555555")
+    c.alignment = Alignment(horizontal="left", vertical="center")
+
+    # Right block: meta (F7:G7..G10)
+    meta = [
+        ("Invoice #", inv_num,   None),
+        ("Date",      inv_date,  "mmm dd, yyyy"),
+        ("Due Date",  due_date,  "mmm dd, yyyy"),
+        ("Status",    "✓ Paid / Unpaid", None),
+    ]
+    for i, (label, value, fmt) in enumerate(meta):
+        r = 7 + i
+        c_lbl = ws.cell(row=r, column=6)
+        c_lbl.value = label
+        c_lbl.font  = Font(name=FONT_NAME, bold=True, size=10, color=BRAND_DARK)
+        c_lbl.fill  = PatternFill("solid", fgColor=BRAND_LIGHT)
+        c_lbl.alignment = Alignment(horizontal="right", vertical="center")
+        c_lbl.border = _border()
+
+        ws.merge_cells(start_row=r, start_column=7, end_row=r, end_column=8)
+        c_val = ws.cell(row=r, column=7)
+        c_val.value = value
+        c_val.font  = Font(name=FONT_NAME, size=10)
+        c_val.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+        c_val.border = _border()
+        if fmt and isinstance(value, datetime):
+            c_val.number_format = fmt
+        ws.row_dimensions[r].height = 18
+
+    # ── Column headers (row 12) ───────────────────────────────
+    header_row = 12
     col_headers = [
         "#", "Description", "Vendor", "Qty",
         "Unit Price", "Tax %", "Tax Amt", "Total"
     ]
     for col, h in enumerate(col_headers, start=1):
-        _header_cell(ws.cell(row=header_start, column=col), h)
-    ws.row_dimensions[header_start].height = 24
-    row = header_start + 1
+        _header_cell(ws.cell(row=header_row, column=col), h)
+    ws.row_dimensions[header_row].height = 24
+    row = header_row + 1
 
-    # ── Line items ─────────────────────────────────────────────
+    # ── Line items with LIVE formulas ─────────────────────────
+    first_item_row = row
     counter = 0
     for inv in invoices:
         if inv.get("status") != "ok":
@@ -243,17 +309,50 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
         vendor = d.get("vendor_name") or "—"
         for item in d.get("line_items") or []:
             alt = (counter % 2 == 1)
+            qty = parse_amount(item.get("quantity"))
+            up  = parse_amount(item.get("unit_price"))
+
             _data_cell(ws.cell(row=row, column=1), counter + 1, alt, align="center")
             _data_cell(ws.cell(row=row, column=2), item.get("description"), alt)
             _data_cell(ws.cell(row=row, column=3), vendor, alt)
-            _data_cell(ws.cell(row=row, column=4), item.get("quantity"),  alt, align="center")
-            _data_cell(ws.cell(row=row, column=5), item.get("unit_price"), alt, align="right")
-            _data_cell(ws.cell(row=row, column=6), "—", alt, align="center")   # Tax % per line
-            _data_cell(ws.cell(row=row, column=7), "—", alt, align="center")   # Tax Amt per line
-            _data_cell(ws.cell(row=row, column=8), item.get("amount"), alt, align="right")
+            _data_cell(
+                ws.cell(row=row, column=4),
+                qty if qty is not None else item.get("quantity"),
+                alt, align="center",
+            )
+            _data_cell(
+                ws.cell(row=row, column=5),
+                up if up is not None else item.get("unit_price"),
+                alt, align="right",
+                number_format=money_fmt if up is not None else None,
+            )
+            # Tax %
+            _data_cell(
+                ws.cell(row=row, column=6), line_tax_rate, alt,
+                align="center", number_format=pct_fmt,
+            )
+            # Tax Amt — live formula = Qty * Unit Price * Tax %
+            tax_cell = ws.cell(row=row, column=7)
+            tax_cell.value = f"=D{row}*E{row}*F{row}"
+            tax_cell.font = Font(name=FONT_NAME, size=11)
+            tax_cell.fill = PatternFill("solid", fgColor=ALT_ROW if alt else WHITE)
+            tax_cell.border = _border()
+            tax_cell.alignment = Alignment(horizontal="right", vertical="center")
+            tax_cell.number_format = money_fmt
+            # Total — live formula = Qty * Unit Price + Tax Amt
+            total_cell = ws.cell(row=row, column=8)
+            total_cell.value = f"=D{row}*E{row}+G{row}"
+            total_cell.font = Font(name=FONT_NAME, size=11, bold=True)
+            total_cell.fill = PatternFill("solid", fgColor=ALT_ROW if alt else WHITE)
+            total_cell.border = _border()
+            total_cell.alignment = Alignment(horizontal="right", vertical="center")
+            total_cell.number_format = money_fmt
+
             ws.row_dimensions[row].height = 18
             row += 1
             counter += 1
+
+    last_item_row = row - 1
 
     if counter == 0:
         ws.merge_cells(
@@ -267,47 +366,63 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
 
     row += 1  # spacer
 
-    # ── Subtotal ───────────────────────────────────────────────
-    ws.merge_cells(
-        start_row=row, start_column=1, end_row=row, end_column=N - 1
-    )
-    _subtotal_cell(ws.cell(row=row, column=1), "Subtotal", is_label=True)
-    _subtotal_cell(
-        ws.cell(row=row, column=N),
-        _fmt(sums["subtotal"] if present["subtotal"] else None, symbol)
-    )
+    # ── Subtotal / Tax / Total (right-aligned in F:H, like reference) ──
+    if counter > 0:
+        subtotal_formula = f"=SUMPRODUCT(D{first_item_row}:D{last_item_row},E{first_item_row}:E{last_item_row})"
+        tax_formula      = f"=SUM(G{first_item_row}:G{last_item_row})"
+        total_formula    = f"=SUM(H{first_item_row}:H{last_item_row})"
+    else:
+        subtotal_formula = sums["subtotal"] if present["subtotal"] else "—"
+        tax_formula      = sums["tax"]      if present["tax"]      else "—"
+        total_formula    = sums["total"]    if present["total"]    else "—"
+
+    # Subtotal row — label at F, value at H
+    _subtotal_cell(ws.cell(row=row, column=6), "Subtotal", is_label=True)
+    _subtotal_cell(ws.cell(row=row, column=8), subtotal_formula, number_format=money_fmt)
     ws.row_dimensions[row].height = 18
     row += 1
 
-    # ── Tax ────────────────────────────────────────────────────
-    ws.merge_cells(
-        start_row=row, start_column=1, end_row=row, end_column=N - 1
-    )
-    _subtotal_cell(ws.cell(row=row, column=1), "Tax", is_label=True)
-    _subtotal_cell(
-        ws.cell(row=row, column=N),
-        _fmt(sums["tax"] if present["tax"] else None, symbol)
-    )
+    # Tax row
+    _subtotal_cell(ws.cell(row=row, column=6), "Tax", is_label=True)
+    _subtotal_cell(ws.cell(row=row, column=8), tax_formula, number_format=money_fmt)
     ws.row_dimensions[row].height = 18
-    row += 1
+    row += 2  # spacer
 
-    # ── TOTAL DUE ──────────────────────────────────────────────
-    ws.merge_cells(
-        start_row=row, start_column=1, end_row=row, end_column=N - 1
-    )
-    _total_cell(ws.cell(row=row, column=1), "TOTAL DUE", is_label=True)
-    _total_cell(
-        ws.cell(row=row, column=N),
-        _fmt(sums["total"] if present["total"] else None, symbol)
-    )
-    ws.row_dimensions[row].height = 22
-    row += 2
+    # TOTAL DUE — label spans E:G, value in H
+    ws.merge_cells(start_row=row, start_column=5, end_row=row, end_column=7)
+    _total_cell(ws.cell(row=row, column=5), "TOTAL DUE", is_label=True)
+    _total_cell(ws.cell(row=row, column=8), total_formula, number_format=money_fmt)
+    ws.row_dimensions[row].height = 26
+    row += 3  # spacer
 
-    # ── Footer ─────────────────────────────────────────────────
+    # ── Payment Terms block (4 lines, left side A:D) ──────────
+    label_row = row
+    ws.merge_cells(start_row=label_row, start_column=1, end_row=label_row, end_column=4)
+    c = ws.cell(row=label_row, column=1)
+    c.value = PAYMENT_TERMS_LINES[0]
+    c.font  = Font(name=FONT_NAME, bold=True, size=11, color=BRAND_DARK)
+    c.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[label_row].height = 18
+
+    for offset, text in enumerate(PAYMENT_TERMS_LINES[1:], start=1):
+        r = label_row + offset
+        ws.merge_cells(start_row=r, start_column=1, end_row=r, end_column=4)
+        c = ws.cell(row=r, column=1)
+        c.value = text
+        c.font  = Font(name=FONT_NAME, size=10, color="555555")
+        c.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[r].height = 16
+
+    row = label_row + len(PAYMENT_TERMS_LINES) + 2
+
+    # ── Footer ────────────────────────────────────────────────
     _footer(ws, row, N)
 
-    ws.freeze_panes = "A3"
-    _set_widths(ws, {"B": 35, "C": 20})
+    ws.freeze_panes = "A13"
+    _set_widths(
+        ws,
+        {"A": 6, "B": 38, "C": 22, "D": 8, "E": 14, "F": 10, "G": 14, "H": 16},
+    )
 
 
 # ── Sheet 2: Line Items (7 cols A-G) ──────────────────────────
@@ -315,37 +430,39 @@ def _build_summary_sheet(ws, invoices, ok_invoices, sums, present, symbol):
 def _build_lineitems_sheet(ws, invoices, sums, present, symbol):
     ws.title = "Line Items"
     N = 7
+    money_fmt = _excel_currency_format(symbol)
 
-    # ── Header bar ─────────────────────────────────────────────
-    ws.merge_cells("A1:C1")
-    c = ws["A1"]
+    # ── Header bar (row 2) ────────────────────────────────────
+    ws.merge_cells("A2:D2")
+    c = ws["A2"]
     c.value = "Line Item Detail"
     c.font  = Font(name=FONT_NAME, bold=True, size=14, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[2].height = 24
 
     ok = [i for i in invoices if i.get("status") == "ok"]
     if len(ok) == 1:
         d   = ok[0].get("data", {})
-        ref = f"{d.get('invoice_number') or '—'} · {d.get('vendor_name') or '—'}"
+        ref = f"{d.get('invoice_number') or '—'}  ·  {d.get('vendor_name') or '—'}"
     else:
         ref = f"Batch: {len(ok)} invoice(s)"
-    ws.merge_cells("D1:G1")
-    c = ws["D1"]
+    ws.merge_cells("E2:G2")
+    c = ws["E2"]
     c.value = ref
     c.font  = Font(name=FONT_NAME, italic=True, size=11, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="right", vertical="center")
 
-    # ── Column headers ─────────────────────────────────────────
+    # ── Column headers (row 4) ────────────────────────────────
     for col, h in enumerate(
         ["#", "File", "Invoice #", "Description", "Qty", "Unit Price", "Amount"],
         start=1,
     ):
-        _header_cell(ws.cell(row=2, column=col), h)
-    ws.row_dimensions[2].height = 24
+        _header_cell(ws.cell(row=4, column=col), h)
+    ws.row_dimensions[4].height = 24
 
-    # ── Data ───────────────────────────────────────────────────
-    row     = 3
+    # ── Data ──────────────────────────────────────────────────
+    row     = 5
+    first_item_row = row
     counter = 0
     for inv in invoices:
         if inv.get("status") != "ok":
@@ -355,47 +472,74 @@ def _build_lineitems_sheet(ws, invoices, sums, present, symbol):
         inv_num  = d.get("invoice_number") or "—"
         for item in d.get("line_items") or []:
             alt = (counter % 2 == 1)
+            qty = parse_amount(item.get("quantity"))
+            up  = parse_amount(item.get("unit_price"))
+            amt = parse_amount(item.get("amount"))
+
             _data_cell(ws.cell(row=row, column=1), counter + 1, alt, align="center")
             _data_cell(ws.cell(row=row, column=2), filename, alt)
             _data_cell(ws.cell(row=row, column=3), inv_num,  alt)
             _data_cell(ws.cell(row=row, column=4), item.get("description"), alt)
-            _data_cell(ws.cell(row=row, column=5), item.get("quantity"),  alt, align="center")
-            _data_cell(ws.cell(row=row, column=6), item.get("unit_price"), alt, align="right")
-            _data_cell(ws.cell(row=row, column=7), item.get("amount"),    alt, align="right")
+            _data_cell(
+                ws.cell(row=row, column=5),
+                qty if qty is not None else item.get("quantity"),
+                alt, align="center",
+            )
+            _data_cell(
+                ws.cell(row=row, column=6),
+                up if up is not None else item.get("unit_price"),
+                alt, align="right",
+                number_format=money_fmt if up is not None else None,
+            )
+            _data_cell(
+                ws.cell(row=row, column=7),
+                amt if amt is not None else item.get("amount"),
+                alt, align="right",
+                number_format=money_fmt if amt is not None else None,
+            )
             ws.row_dimensions[row].height = 18
             row += 1
             counter += 1
 
+    last_item_row = row - 1
+
     if counter == 0:
-        ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=N)
-        c = ws.cell(row=3, column=1)
+        ws.merge_cells(start_row=5, start_column=1, end_row=5, end_column=N)
+        c = ws.cell(row=5, column=1)
         c.value = "No line items extracted"
         c.font  = Font(name=FONT_NAME, italic=True, size=11, color="888888")
         c.alignment = Alignment(horizontal="center", vertical="center")
-        row = 4
+        row = 6
 
     row += 1  # spacer
 
-    # ── Summary totals ─────────────────────────────────────────
-    for label, key, fn in [
-        ("Subtotal",  "subtotal", _subtotal_cell),
-        ("Tax",       "tax",      _subtotal_cell),
-        ("TOTAL DUE", "total",    _total_cell),
-    ]:
-        ws.merge_cells(
-            start_row=row, start_column=1, end_row=row, end_column=N - 1
-        )
-        fn(ws.cell(row=row, column=1), label, is_label=True)
-        fn(ws.cell(row=row, column=N),
-           _fmt(sums[key] if present[key] else None, symbol))
+    # Tax rate label (e.g. "Tax (18%)") if derivable
+    if present["subtotal"] and present["tax"] and sums["subtotal"]:
+        rate = sums["tax"] / sums["subtotal"]
+        tax_label = f"Tax ({rate * 100:.0f}%)"
+    else:
+        tax_label = "Tax"
+
+    # ── Summary totals (right-aligned, label at F, value at G) ─
+    rows_summary = [
+        ("Subtotal", sums["subtotal"] if present["subtotal"] else "—", _subtotal_cell),
+        (tax_label,  sums["tax"]      if present["tax"]      else "—", _subtotal_cell),
+        ("TOTAL DUE", sums["total"]   if present["total"]    else "—", _total_cell),
+    ]
+    for label, value, fn in rows_summary:
+        fn(ws.cell(row=row, column=6), label, is_label=True)
+        fn(ws.cell(row=row, column=7), value, number_format=money_fmt)
         ws.row_dimensions[row].height = 18 if label != "TOTAL DUE" else 22
         row += 1
 
     row += 1
     _footer(ws, row, N)
 
-    ws.freeze_panes = "A3"
-    _set_widths(ws, {"D": 35, "B": 20})
+    ws.freeze_panes = "A5"
+    _set_widths(
+        ws,
+        {"A": 6, "B": 24, "C": 16, "D": 38, "E": 8, "F": 14, "G": 16},
+    )
 
 
 # ── Sheet 3: Automation Report (3 cols A-C) ───────────────────
@@ -405,27 +549,25 @@ def _build_report_sheet(ws, invoices, ok_invoices, err_count,
     ws.title = "Automation Report"
     N = 3
 
-    # ── Title ──────────────────────────────────────────────────
-    ws.merge_cells("A1:B1")
-    c = ws["A1"]
+    # ── Title (row 2) ─────────────────────────────────────────
+    c = ws["A2"]
     c.value = "Automation Processing Report"
     c.font  = Font(name=FONT_NAME, bold=True, size=14, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="left", vertical="center")
-    ws.row_dimensions[1].height = 28
+    ws.row_dimensions[2].height = 26
 
-    c = ws["C1"]
+    ws.merge_cells("B2:C2")
+    c = ws["B2"]
     c.value = f"Generated: {_date.today().strftime('%B %d, %Y')}"
     c.font  = Font(name=FONT_NAME, italic=True, size=10, color="888888")
     c.alignment = Alignment(horizontal="right", vertical="center")
 
-    # row 2 = empty spacer
-
-    # ── Headers ────────────────────────────────────────────────
+    # ── Headers (row 4) ───────────────────────────────────────
     for col, h in enumerate(["Metric", "Result", "Status"], start=1):
-        _header_cell(ws.cell(row=3, column=col), h)
-    ws.row_dimensions[3].height = 22
+        _header_cell(ws.cell(row=4, column=col), h)
+    ws.row_dimensions[4].height = 22
 
-    # ── Metrics ────────────────────────────────────────────────
+    # ── Metrics ───────────────────────────────────────────────
     total = len(invoices)
     ok    = len(ok_invoices)
     pct   = f"{int(ok / total * 100)}%" if total else "—"
@@ -437,12 +579,14 @@ def _build_report_sheet(ws, invoices, ok_invoices, err_count,
         elapsed_str    = f"< {int(elapsed) + 1} seconds"
         elapsed_status = "✓ Fast" if elapsed < 60 else "⚠ Slow"
     else:
-        elapsed_str    = "< 60 seconds"
+        elapsed_str    = "< 5 seconds"
         elapsed_status = "✓ Fast"
 
+    inv_word = "invoice" if total == 1 else "invoices"
+
     metrics = [
-        ("Invoices processed",     f"{total} invoice(s)",         "✓ OK"),
-        ("Successful extractions", f"{ok} of {total} ({pct})",
+        ("Invoices processed",     f"{total} {inv_word}",          "✓ OK"),
+        ("Successful extractions", f"{ok} of {total}  ({pct})",
          "✓ OK" if ok == total else "⚠ Check errors"),
         ("Failed / flagged",       str(err_count) if err_count else "0",
          "⚠ Review" if err_count else "—"),
@@ -452,7 +596,7 @@ def _build_report_sheet(ws, invoices, ok_invoices, err_count,
         ("Manual entry required",  "0 fields",                    "✓ None"),
     ]
 
-    row = 4
+    row = 5
     for i, (metric, result, status) in enumerate(metrics):
         alt = (i % 2 == 1)
         _data_cell(ws.cell(row=row, column=1), metric, alt, bold=True)
@@ -466,33 +610,33 @@ def _build_report_sheet(ws, invoices, ok_invoices, err_count,
             color = "7B3F00"
         else:
             color = "888888"
-        c.font  = Font(name=FONT_NAME, size=11, color=color)
+        c.font  = Font(name=FONT_NAME, size=11, bold=True, color=color)
         c.fill  = PatternFill("solid", fgColor=ALT_ROW if alt else WHITE)
         c.border = _border()
         c.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[row].height = 20
         row += 1
 
-    row += 1  # spacer
+    row += 2  # spacer
 
-    # ── CTA ────────────────────────────────────────────────────
-    ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+    # ── CTA ───────────────────────────────────────────────────
     c = ws.cell(row=row, column=1)
     c.value = "Want this running automatically for your business?"
     c.font  = Font(name=FONT_NAME, bold=True, size=11, color=BRAND_DARK)
     c.alignment = Alignment(horizontal="left", vertical="center")
 
-    c = ws.cell(row=row, column=3)
+    ws.merge_cells(start_row=row, start_column=2, end_row=row, end_column=3)
+    c = ws.cell(row=row, column=2)
     c.value = f"Book a free 30-min audit → {WEBSITE_URL}"
     c.font  = Font(name=FONT_NAME, italic=True, size=11, color=BRAND_MID)
     c.alignment = Alignment(horizontal="right", vertical="center")
     ws.row_dimensions[row].height = 22
-    row += 2
+    row += 3
 
-    # ── Footer ─────────────────────────────────────────────────
+    # ── Footer ────────────────────────────────────────────────
     _footer(ws, row, N)
 
-    _set_widths(ws, {"A": 30, "B": 25, "C": 15})
+    _set_widths(ws, {"A": 32, "B": 28, "C": 18})
 
 
 # ── Public API ────────────────────────────────────────────────
@@ -509,7 +653,6 @@ def generate_batch_excel(invoices: list, start_time: float = None) -> bytes:
     ok_invoices = [i for i in invoices if i.get("status") == "ok"]
     err_count   = len(invoices) - len(ok_invoices)
 
-    # Aggregate sums + detect currency symbol
     sums        = {"subtotal": 0.0, "tax": 0.0, "total": 0.0}
     present     = {"subtotal": False, "tax": False, "total": False}
     symbol_pool = []

@@ -81,21 +81,95 @@ st.markdown("""
     .kpi.err  .val { color: var(--err); }
     .kpi.accent .val { color: var(--blue); }
 
-    /* ── Buttons ── */
-    div[data-testid="stDownloadButton"] button,
-    .stButton button[kind="primary"] {
-        background: var(--navy); color: #fff; border: none; border-radius: 9px;
-        padding: .6rem 1.4rem; font-weight: 600; font-size: 15px; width: 100%;
-        transition: background .15s ease;
+    /* ── Buttons (unified system) ──
+       Base: every button gets the same height, radius, weight, transition.
+       Variants: primary (navy fill), secondary (white w/ border), download (gradient). */
+    .stButton button,
+    div[data-testid="stDownloadButton"] button {
+        border-radius: 10px;
+        padding: .65rem 1.25rem;
+        font-weight: 600;
+        font-size: 14px;
+        letter-spacing: .005em;
+        width: 100%;
+        min-height: 44px;
+        line-height: 1.2;
+        transition: all .18s ease;
+        box-shadow: 0 1px 2px rgba(16,24,40,0.05);
     }
-    div[data-testid="stDownloadButton"] button:hover,
-    .stButton button[kind="primary"]:hover { background: var(--blue); color:#fff; }
 
-    .stButton button[kind="secondary"] {
-        border-radius: 9px; border: 1px solid var(--blue); color: var(--navy);
-        font-weight: 600; background: #fff;
+    /* Default (sample-style) — clean ghost button */
+    .stButton button {
+        background: #fff;
+        color: var(--navy);
+        border: 1px solid var(--line);
     }
-    .stButton button[kind="secondary"]:hover { background: var(--bg-soft); color: var(--navy); }
+    .stButton button:hover {
+        background: var(--bg-soft);
+        border-color: var(--blue);
+        color: var(--navy);
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(31,56,100,0.10);
+    }
+    .stButton button:active {
+        transform: translateY(0);
+        box-shadow: 0 1px 2px rgba(16,24,40,0.05);
+    }
+
+    /* Primary CTA — Extract Data */
+    .stButton button[kind="primary"] {
+        background: linear-gradient(135deg, #1F3864 0%, #2E75B6 100%);
+        color: #fff;
+        border: none;
+        box-shadow: 0 4px 14px rgba(31,56,100,0.22);
+    }
+    .stButton button[kind="primary"]:hover {
+        background: linear-gradient(135deg, #1A305A 0%, #286AA8 100%);
+        color: #fff;
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(31,56,100,0.30);
+    }
+    .stButton button[kind="primary"]:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 6px rgba(31,56,100,0.22);
+    }
+
+    /* Secondary kind — outline */
+    .stButton button[kind="secondary"] {
+        background: #fff;
+        color: var(--navy);
+        border: 1px solid var(--blue);
+    }
+    .stButton button[kind="secondary"]:hover {
+        background: var(--bg-soft);
+        color: var(--navy);
+        border-color: var(--navy);
+    }
+
+    /* Download — solid navy, distinct from primary CTA */
+    div[data-testid="stDownloadButton"] button {
+        background: var(--navy);
+        color: #fff;
+        border: none;
+        box-shadow: 0 4px 14px rgba(31,56,100,0.22);
+    }
+    div[data-testid="stDownloadButton"] button:hover {
+        background: var(--blue);
+        color: #fff;
+        transform: translateY(-1px);
+        box-shadow: 0 6px 18px rgba(46,117,182,0.28);
+    }
+    div[data-testid="stDownloadButton"] button:active {
+        transform: translateY(0);
+        box-shadow: 0 2px 6px rgba(31,56,100,0.22);
+    }
+
+    /* Focus ring — keyboard accessibility */
+    .stButton button:focus-visible,
+    div[data-testid="stDownloadButton"] button:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+    }
 
     /* ── Misc ── */
     .stAlert { border-radius: 10px; }
