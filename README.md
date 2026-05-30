@@ -17,7 +17,7 @@ Small businesses waste **2–6 hours per week** manually copying data from PDF i
 
 Upload your invoices. Get a clean, structured Excel file in under 30 seconds.
 
-**[→ Try the live demo](YOUR_STREAMLIT_URL)**
+**[→ Try the live demo]([YOUR_STREAMLIT_URL](https://invoice-extractor-cmdkq7ehi57dhjqgqbzlj6.streamlit.app/))**
 
 ---
 
@@ -43,7 +43,7 @@ If the extracted total doesn't match the sum of line items, the tool flags it au
 
 ## Demo
 
-![Invoice Extractor Demo](assets/demo.gif)
+![Invoice Extractor Demo]([assets/demo.gif](https://invoice-extractor-cmdkq7ehi57dhjqgqbzlj6.streamlit.app/))
 
 *(Upload → Extract → Download — in under 30 seconds)*
 
