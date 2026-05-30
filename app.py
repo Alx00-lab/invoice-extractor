@@ -16,9 +16,15 @@ from extractor import (
     redact,
     safe_filename,
     file_id,
+    md_safe,
+    install_log_redaction,
 )
 
 logging.basicConfig(level=logging.INFO)
+# Belt-and-suspenders: every log line from us OR any third-party library
+# (pdfplumber, openai, httpx, streamlit) passes through redact() before
+# it reaches stdout / the Streamlit Cloud log sink.
+install_log_redaction()
 
 # ── Demo guardrails ───────────────────────────────────────────
 # Every OpenAI call costs real money. These caps bound the worst-case
@@ -371,7 +377,7 @@ if files_to_process:
     st.info(f"📄 **{len(files_to_process)} file(s)** ready to process.")
     with st.expander("Files queued", expanded=False):
         for name, _, _ in files_to_process:
-            st.markdown(f"- {name}")
+            st.markdown(f"- {md_safe(name)}")
 
     process_clicked = st.button(
         f"⚡ Extract Data from {len(files_to_process)} Invoice(s)",
@@ -386,7 +392,9 @@ if files_to_process:
         results     = []
 
         for i, (filename, file_obj, file_type) in enumerate(files_to_process):
-            status_text.markdown(f"**Processing {i+1}/{len(files_to_process)}** — `{filename}`")
+            status_text.markdown(
+                f"**Processing {i+1}/{len(files_to_process)}** — `{md_safe(filename)}`"
+            )
             try:
                 if file_type == "file":
                     file_obj.seek(0)
@@ -424,7 +432,10 @@ if files_to_process:
             with st.expander(f"⚠️ {err_count} file(s) had errors", expanded=True):
                 for r in results:
                     if r["status"] == "error":
-                        st.markdown(f"**{r['filename']}** — {r['error']}")
+                        # Both filename and error are user-derived; escape both.
+                        st.markdown(
+                            f"**{md_safe(r['filename'])}** — {md_safe(r['error'])}"
+                        )
 
         # ── Results table ─────────────────────────────────────
         if ok_count:
@@ -453,7 +464,7 @@ if files_to_process:
             if warnings:
                 st.markdown("**⚠️ Validation warnings**")
                 for fname, w in warnings:
-                    st.warning(f"`{fname}` — {w}")
+                    st.warning(f"`{md_safe(fname)}` — {md_safe(w)}")
 
         # ── Download ──────────────────────────────────────────
         st.markdown("<hr/>", unsafe_allow_html=True)

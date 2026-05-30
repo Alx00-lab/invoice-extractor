@@ -8,6 +8,7 @@ filenames containing PII. We scrub them at every boundary before they leave
 the process or surface in the UI.
 """
 import hashlib
+import logging
 import re
 from pathlib import PurePath
 
@@ -90,3 +91,61 @@ def file_id(name) -> str:
         return "file:unknown"
     digest = hashlib.sha256(str(name).encode("utf-8", "replace")).hexdigest()[:10]
     return f"file:{digest}"
+
+
+# ── Markdown-safe display (defangs user-controlled text for st.markdown) ──
+# Streamlit's markdown renderer is XSS-safe but still honors *, _, [], `, etc.
+# A PDF named "**ACME**.pdf" would render in bold. We backslash-escape every
+# CommonMark special so user-controlled strings render literally.
+_MD_SPECIALS = r"\\`*_{}[]()#+-.!|<>~"
+_MD_TRANS = str.maketrans({ch: f"\\{ch}" for ch in _MD_SPECIALS})
+
+
+def md_safe(text) -> str:
+    """
+    Backslash-escape every CommonMark special so `text` renders verbatim
+    when passed to `st.markdown(...)`. Use this on any user-controlled
+    string (filenames, error messages from external sources) before
+    interpolating into markdown.
+    """
+    if text is None:
+        return ""
+    return str(text).translate(_MD_TRANS)
+
+
+# ── Root logging filter (catches third-party logs too) ────────
+
+class _RedactingFilter(logging.Filter):
+    """Pre-format a record's message and replace it with the redacted version.
+
+    Setting `args = None` prevents the standard handler from re-formatting
+    with the original args, which would re-introduce the secret we just
+    stripped. Robust against records whose `msg` is not a string.
+    """
+    def filter(self, record):
+        try:
+            record.msg  = redact(record.getMessage())
+            record.args = None
+        except Exception:
+            # Never let a logging filter raise — it would silently kill all logs.
+            pass
+        return True
+
+
+def install_log_redaction():
+    """
+    Attach a redacting filter to every handler on the root logger.
+
+    Why on handlers and not the logger itself: in stdlib `logging`, filters
+    on a *logger* only see records emitted directly to that logger. Records
+    propagated up from child loggers (`pdfplumber`, `openai`, `httpx`) bypass
+    them and are only filtered by handler-level filters. Adding the filter
+    to handlers catches everything that actually leaves the process.
+
+    Call AFTER `logging.basicConfig(...)` so the default StreamHandler
+    exists. Idempotent — safe to call repeatedly.
+    """
+    root = logging.getLogger()
+    for handler in root.handlers:
+        if not any(isinstance(f, _RedactingFilter) for f in handler.filters):
+            handler.addFilter(_RedactingFilter())
