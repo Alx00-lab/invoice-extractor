@@ -4,6 +4,7 @@ load_dotenv()
 import os
 import html
 import logging
+import time
 from pathlib import Path
 
 import streamlit as st
@@ -141,6 +142,7 @@ if secrets_path.exists():
 if not api_key:
     api_key = os.getenv("OPENAI_API_KEY", "")
 
+# ── Sidebar ───────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### How it works")
     st.markdown(
@@ -150,19 +152,29 @@ with st.sidebar:
         "4. Download one clean Excel file"
     )
     st.divider()
-    st.markdown("Built by **Alex** · [Upwork](YOUR_UPWORK_URL)")
+    st.markdown("Built by **Alex** · Finance Automation Specialist")
 
 # ── Session state ─────────────────────────────────────────────
 SAMPLE_PATH = Path(__file__).parent / "samples" / "sample_invoice.pdf"
 st.session_state.setdefault("use_sample", False)
+st.session_state.setdefault("use_sample_batch", False)
 
-# ── Sample button ─────────────────────────────────────────────
-col_sample, col_info = st.columns([1, 3])
-with col_sample:
-    if st.button("🎯 Try with sample invoice", use_container_width=True):
-        st.session_state.use_sample = True
-with col_info:
-    st.caption("No invoice handy? Click to test with a sample PDF.")
+# ── Sample buttons ────────────────────────────────────────────
+if SAMPLE_PATH.exists():
+    col1, col2, col3 = st.columns([1, 1, 2])
+    with col1:
+        if st.button("🎯 Try sample invoice", use_container_width=True):
+            st.session_state.use_sample = True
+            st.session_state.use_sample_batch = False
+    with col2:
+        if st.button("📦 Try 5 invoices →", use_container_width=True):
+            st.session_state.use_sample_batch = True
+            st.session_state.use_sample = False
+    with col3:
+        st.caption("No invoice handy? Try the demo with sample data.")
+else:
+    # TODO: add sample_invoice.pdf to samples/ folder
+    pass
 
 # ── Upload ────────────────────────────────────────────────────
 uploaded_files = st.file_uploader(
@@ -174,7 +186,15 @@ uploaded_files = st.file_uploader(
 
 # ── Resolve which files to process ────────────────────────────
 files_to_process = []
-if st.session_state.use_sample:
+if st.session_state.use_sample_batch:
+    if SAMPLE_PATH.exists():
+        files_to_process = [
+            (f"sample_invoice_{i}.pdf", str(SAMPLE_PATH), "path")
+            for i in range(1, 6)
+        ]
+    else:
+        st.session_state.use_sample_batch = False
+elif st.session_state.use_sample:
     if SAMPLE_PATH.exists():
         files_to_process = [("sample_invoice.pdf", str(SAMPLE_PATH), "path")]
     else:
@@ -205,9 +225,10 @@ if files_to_process:
     )
 
     if process_clicked:
-        progress = st.progress(0.0)
+        _start = time.time()          # for Sheet 3 processing-time metric
+        progress    = st.progress(0.0)
         status_text = st.empty()
-        results = []
+        results     = []
 
         for i, (filename, file_obj, file_type) in enumerate(files_to_process):
             status_text.markdown(f"**Processing {i+1}/{len(files_to_process)}** — `{filename}`")
@@ -215,7 +236,7 @@ if files_to_process:
                 if file_type == "file":
                     file_obj.seek(0)
                 raw_text = extract_text_from_pdf(file_obj)
-                data = parse_invoice(raw_text, api_key)
+                data     = parse_invoice(raw_text, api_key)
                 results.append({"filename": filename, "status": "ok", "data": data})
             except (ValueError, RuntimeError) as e:
                 logging.error(f"Failed on {filename}: {e}")
@@ -225,16 +246,18 @@ if files_to_process:
         status_text.empty()
         progress.empty()
 
-        ok_count = sum(1 for r in results if r["status"] == "ok")
+        ok_count  = sum(1 for r in results if r["status"] == "ok")
         err_count = sum(1 for r in results if r["status"] == "error")
 
         # ── KPI cards ─────────────────────────────────────────
         st.markdown("<hr/>", unsafe_allow_html=True)
         k1, k2, k3 = st.columns(3)
         k1.markdown(kpi_card(len(results), "Total processed", "accent"), unsafe_allow_html=True)
-        k2.markdown(kpi_card(ok_count, "Successful", "ok"), unsafe_allow_html=True)
-        k3.markdown(kpi_card(err_count, "Failed", "err" if err_count else "default"),
-                    unsafe_allow_html=True)
+        k2.markdown(kpi_card(ok_count,  "Successful", "ok"),             unsafe_allow_html=True)
+        k3.markdown(
+            kpi_card(err_count, "Failed", "err" if err_count else "default"),
+            unsafe_allow_html=True,
+        )
 
         if err_count:
             with st.expander(f"⚠️ {err_count} file(s) had errors", expanded=True):
@@ -251,13 +274,13 @@ if files_to_process:
                     d = r["data"]
                     table_data.append({
                         "File":      r["filename"],
-                        "Vendor":    d.get("vendor_name") or "—",
+                        "Vendor":    d.get("vendor_name")   or "—",
                         "Invoice #": d.get("invoice_number") or "—",
-                        "Date":      d.get("invoice_date") or "—",
-                        "Due":       d.get("due_date") or "—",
-                        "Subtotal":  d.get("subtotal") or "—",
-                        "Tax":       d.get("tax") or "—",
-                        "Total":     d.get("total") or "—",
+                        "Date":      d.get("invoice_date")   or "—",
+                        "Due":       d.get("due_date")       or "—",
+                        "Subtotal":  d.get("subtotal")       or "—",
+                        "Tax":       d.get("tax")            or "—",
+                        "Total":     d.get("total")          or "—",
                     })
             st.dataframe(table_data, use_container_width=True, hide_index=True)
 
@@ -275,7 +298,7 @@ if files_to_process:
         st.markdown("<hr/>", unsafe_allow_html=True)
         with st.spinner("Generating Excel file..."):
             try:
-                excel_bytes = generate_batch_excel(results)
+                excel_bytes = generate_batch_excel(results, start_time=_start)
             except Exception as e:
                 st.error(f"Could not generate Excel: {e}")
                 st.stop()
@@ -293,15 +316,26 @@ if files_to_process:
             use_container_width=True,
         )
 
+        # ── CTA (Fix 3) ───────────────────────────────────────
+        st.markdown("---")
+        st.markdown(
+            "💼 **Want this running automatically for your business?**  \n"
+            "[Book a free 30-min audit →](https://yourwebsite.com)",
+            unsafe_allow_html=False,
+        )
+
+        # Reset sample flags
         if st.session_state.use_sample:
             st.session_state.use_sample = False
+        if st.session_state.use_sample_batch:
+            st.session_state.use_sample_batch = False
 
 else:
     st.markdown("""
     <div class="empty-card">
         <div class="big">📥</div>
         <p style="margin:.6rem 0 0 0;">Upload one or more invoice PDFs above,<br/>
-        or click <b>Try with sample invoice</b> to see it in action.</p>
+        or click <b>Try sample invoice</b> to see it in action.</p>
     </div>
     """, unsafe_allow_html=True)
 
